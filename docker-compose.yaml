@@ -233,9 +233,4 @@ networks:
     driver: bridge
   backend-net:
     driver: bridge
-    # Note: NOT internal. "internal: true" also blocks Docker's own
-    # port-publishing NAT rules, which broke Prometheus/Grafana access.
-    # Isolation of db/backend from frontend is achieved simply by them
-    # being on a different Docker network than "frontend", and by db/backend
-    # having no "ports:" entries — so they were never reachable from the
-    # host or from frontend anyway.
+    
