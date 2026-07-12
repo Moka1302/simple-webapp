@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Simple Web App</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 60px auto;
+      padding: 0 20px;
+      color: #222;
+    }
+    h1 { color: #2c3e50; }
+    button {
+      background: #2c7be5;
+      color: white;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+    button:hover { background: #1a5fbf; }
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>Simple Web App</h1>
+  <p>Front-End (served by Nginx) &rarr; Proxy &rarr; Back-End (Flask) &rarr; Database (Postgres)</p>
+
+  <button onclick="callApi('/api/hello')">Call /api/hello</button>
+  <button onclick="callApi('/api/db-check')">Check Database</button>
+  <button onclick="loadItems()">Load Items Table</button>
+
+  <h3>Add New Item (write to DB):</h3>
+  <input id="new-name" type="text" placeholder="Name" style="padding:6px; margin-right:6px;">
+  <input id="new-desc" type="text" placeholder="Description" style="padding:6px; margin-right:6px; width:250px;">
+  <button onclick="addItem()">Add Item</button>
+
+  <h3>Response:</h3>
+  <pre id="output">Click a button above...</pre>
+
+  <h3>Items Table (from Postgres):</h3>
+  <table id="items-table" border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%; display: none;">
+    <thead>
+      <tr><th>ID</th><th>Name</th><th>Description</th><th>Created At</th></tr>
+    </thead>
+    <tbody id="items-body"></tbody>
+  </table>
+
+  <script>
+    async function callApi(path) {
+      const output = document.getElementById('output');
+      output.textContent = 'Loading...';
+      try {
+        const res = await fetch(path);
+        const data = await res.json();
+        output.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        output.textContent = 'Error: ' + err;
+      }
+    }
+
+    async function loadItems() {
+      const table = document.getElementById('items-table');
+      const body = document.getElementById('items-body');
+      body.innerHTML = '';
+      try {
+        const res = await fetch('/api/items');
+        const data = await res.json();
+        if (!Array.isArray(data)) {
+          document.getElementById('output').textContent =
+            'Error loading items: ' + (data.detail || JSON.stringify(data));
+          table.style.display = 'none';
+          return;
+        }
+        data.forEach(function(item) {
+          var row = document.createElement('tr');
+          var cells = [item.id, item.name, item.description, item.created_at];
+          cells.forEach(function(val) {
+            var td = document.createElement('td');
+            td.textContent = val;
+            row.appendChild(td);
+          });
+          body.appendChild(row);
+        });
+        table.style.display = 'table';
+      } catch (err) {
+        document.getElementById('output').textContent = 'Error loading items: ' + err;
+      }
+    }
+
+    async function addItem() {
+      const name = document.getElementById('new-name').value;
+      const description = document.getElementById('new-desc').value;
+      const output = document.getElementById('output');
+      output.textContent = 'Saving...';
+      try {
+        const res = await fetch('/api/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name, description: description })
+        });
+        const data = await res.json();
+        output.textContent = JSON.stringify(data, null, 2);
+        document.getElementById('new-name').value = '';
+        document.getElementById('new-desc').value = '';
+        loadItems();
+      } catch (err) {
+        output.textContent = 'Error adding item: ' + err;
+      }
+    }
+  </script>
+</body>
+</html>

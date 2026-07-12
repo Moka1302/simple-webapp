@@ -1,0 +1,39 @@
+simple-webapp/
+├── docker-compose.yaml       ← wires all 5 services together
+├── frontend/
+│   ├── index.html            ← calls /api/hello and /api/db-check
+│   └── Dockerfile
+├── backend/
+│   ├── app.py                ← Flask API + /metrics for Prometheus
+│   ├── requirements.txt
+│   └── Dockerfile
+├── proxy/
+│   ├── nginx.conf            ← routes / → frontend, /api → backend
+│   └── Dockerfile
+└── monitoring/
+    └── prometheus.yml        ← scrapes backend metrics every 5s
+    
+
+    
+frontend-net:  frontend ─┐
+                         ├── proxy (on both)
+backend-net:   backend ──┘        │
+                  │               └── can reach both frontend and backend
+                  db
+                  prometheus
+                  grafana
+                                                     
+                                                                                                         
+Browser
+   │
+   ▼
+[ proxy ] :8080  ← ONLY service with a published port — the single gate
+   ├── /       → frontend  (no published port)
+   └── /api/   → backend   (no published port)
+                     │
+                     ├── GET  /api/items  → reads from Postgres
+                     └── POST /api/items  → writes to Postgres
+                                  │
+                                  ▼
+                          [ db ] (no published port)
+                          Postgres data → webapp_db_data (named volume)

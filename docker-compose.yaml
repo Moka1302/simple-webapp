@@ -1,0 +1,241 @@
+services:
+
+  # --- FRONT-END ---
+  # No published port. Only reachable through the proxy on frontend-net.
+  frontend:
+    build: ./frontend
+    container_name: webapp-frontend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - frontend-net
+
+  # --- BACK-END ---
+  # No published port. Reads AND writes to Postgres via /api/items (GET + POST).
+  # Only reachable through the proxy, and only backend can reach the db.
+  backend:
+    build: ./backend
+    container_name: webapp-backend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      DB_HOST: db
+      DB_NAME: webappdb
+      DB_USER: appuser
+      DB_PASSWORD: apppass
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend-net
+
+  # --- DATABASE ---
+  # No published port — unreachable from the host or the internet.
+  # Data survives container restarts/rebuilds because it's written to the
+  # named volume "webapp_db_data" below, not to the container's writable layer.
+  db:
+    image: postgres:16
+    container_name: webapp-db
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: apppass
+      POSTGRES_DB: webappdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d webappdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    volumes:
+      - webapp_db_data:/var/lib/postgresql/data   # <-- permanent storage
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - backend-net
+
+  # --- PROXY: the single entry point (the "gate") ---
+  # This is the ONLY service with a port published to the host.
+  # All browser traffic must pass through here: / -> frontend, /api -> backend.
+  proxy:
+    build: ./proxy
+    container_name: webapp-proxy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "8080:80"
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - frontend-net
+      - backend-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: webapp-prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "9090:9090"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - backend-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: webapp-grafana
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      - backend-net
+
+  # --- cAdvisor ---
+  # Watches Docker itself and reports per-container resource usage
+  # (CPU, memory, disk I/O, network) and container state (running,
+  # restart count, uptime) — no code changes needed in your app for this.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: webapp-cadvisor
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    networks:
+      - backend-net
+
+volumes:
+  webapp_db_data:   # persists on the host Docker volume storage, independent of container lifecycle
+
+networks:
+  frontend-net:
+    driver: bridge
+  backend-net:
+    driver: bridge
+    # Note: NOT internal. "internal: true" also blocks Docker's own
+    # port-publishing NAT rules, which broke Prometheus/Grafana access.
+    # Isolation of db/backend from frontend is achieved simply by them
+    # being on a different Docker network than "frontend", and by db/backend
+    # having no "ports:" entries — so they were never reachable from the
+    # host or from frontend anyway.
